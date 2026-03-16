@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# YOLO runs y pesos descargados
+runs/
+*.pt
+
+# Dataset imágenes (subir solo estructura)
+dataset/images/
+dataset/labels/
+
+# Archivos del sistema
+.DS_Store

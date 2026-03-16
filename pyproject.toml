@@ -1,0 +1,11 @@
+[project]
+name = "scara-robot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "nxt-python>=3.5.1",
+    "opencv-python>=4.13.0.92",
+    "ultralytics>=8.4.22",
+]
