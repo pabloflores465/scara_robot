@@ -36,6 +36,9 @@ def conectar_nxt():
     print(f"[NXT] Conectado  : {name}")
     print(f"[NXT] BT address : {bt_address}")
     print(f"[NXT] Flash libre: {free_flash} bytes")
+    # Sonido de confirmación: do-mi-sol
+    for freq, dur in [(523, 150), (659, 150), (784, 300)]:
+        brick.play_tone_and_wait(freq, dur)
     return brick
 
 
