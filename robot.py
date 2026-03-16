@@ -50,27 +50,28 @@ PUERTOS_MOTOR = {
 }
 
 
-def verificar_motores(brick, grados: int = 90, potencia: int = 50):
+def verificar_motores(brick, grados: int = 90, potencia: int = 75):
     """
     Gira cada motor (A, B, C) `grados` adelante y luego regresa.
     Prueba visual del Día 1.
 
-    Nota: tacho_units mínimo recomendado es 50; valores menores
-    pueden dar resultados impredecibles según la documentación.
+    Usa weak_turn() en lugar de turn() para evitar BlockedException:
+    weak_turn() envía el comando y retorna inmediatamente sin monitorear
+    el tacómetro, lo que es ideal cuando el motor aún no tiene carga mecánica.
     """
     for nombre, puerto in PUERTOS_MOTOR.items():
         motor = brick.get_motor(puerto)
         print(f"[MOTOR {nombre}] → {grados}°")
-        motor.turn(potencia, grados)
-        time.sleep(0.3)
+        motor.weak_turn(potencia, grados)
+        time.sleep(1.0)
         print(f"[MOTOR {nombre}] ← {grados}°")
-        motor.turn(potencia, grados)   # turn siempre positivo; invertir con -potencia
-        motor.turn(-potencia, grados)
-        time.sleep(0.3)
+        motor.weak_turn(-potencia, grados)
+        time.sleep(1.0)
+        motor.idle()
         print(f"[MOTOR {nombre}] OK")
 
 
-def mover_motor(brick, puerto_letra: str, grados: int, potencia: int = 50):
+def mover_motor(brick, puerto_letra: str, grados: int, potencia: int = 75):
     """
     Mueve un motor específico.
     - puerto_letra: 'A', 'B' o 'C'
