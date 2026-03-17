@@ -1,0 +1,12 @@
+# dataset/data.yaml — Configuración del dataset para YOLO
+# Generado automáticamente por entrenar.py
+# Clases: 0=pelota_azul, 1=pelota_roja
+
+path: dataset        # directorio raíz (relativo al directorio de ejecución)
+train: images/train
+val:   images/val
+
+nc: 2
+names:
+  - pelota_azul
+  - pelota_roja
