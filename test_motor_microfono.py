@@ -45,13 +45,40 @@ def prueba_motor(brick):
     print("[MOTOR] OK")
 
 
+def escanear_puertos_sonido(brick):
+    """
+    Prueba los 4 puertos de sensor y muestra cuál detecta sonido.
+    Útil para encontrar en qué puerto está conectado el micrófono.
+    """
+    print("\n[SCAN] Escaneando puertos S1-S4 durante 3 s cada uno...")
+    print("       Habla o aplaude mientras se escanea cada puerto.\n")
+    for puerto in [nxt.sensor.Port.S1, nxt.sensor.Port.S2,
+                   nxt.sensor.Port.S3, nxt.sensor.Port.S4]:
+        nombre = f"S{puerto.value + 1}"
+        try:
+            micro = Sound(brick, puerto)
+            time.sleep(0.3)   # espera de inicialización del sensor
+            lecturas = []
+            for _ in range(15):
+                lecturas.append(micro.get_loudness())
+                time.sleep(0.2)
+            maximo = max(lecturas)
+            promedio = sum(lecturas) // len(lecturas)
+            estado = "← SENSOR AQUÍ ✓" if maximo > 50 else "(sin señal)"
+            print(f"  {nombre}: max={maximo:4d}  prom={promedio:4d}  {estado}")
+        except Exception as e:
+            print(f"  {nombre}: Error — {e}")
+    print()
+
+
 def prueba_microfono(brick, segundos: int = 10):
     """
     Lee el nivel de sonido durante `segundos` segundos y lo muestra
     como barra en la terminal. Rango: 0-1023.
     """
     micro = Sound(brick, PUERTO_MICRO)
-    print(f"\n[MICRO] Leyendo sonido {segundos}s  (Ctrl+C para salir antes)")
+    time.sleep(0.3)   # espera de inicialización
+    print(f"\n[MICRO] Puerto S{PUERTO_MICRO.value + 1} — Leyendo {segundos}s")
     print("        Habla, aplaude o silba cerca del sensor.\n")
 
     inicio = time.time()
@@ -73,6 +100,7 @@ def modo_reactivo(brick, segundos: int = 30):
     Como una palma de mano que activa el robot.
     """
     micro = Sound(brick, PUERTO_MICRO)
+    time.sleep(0.3)   # espera de inicialización
     motor = brick.get_motor(PUERTO_MOTOR)
     print(f"\n[REACTIVO] Motor se activa si sonido > {UMBRAL_SONIDO}")
     print(f"           Duración: {segundos}s  (Ctrl+C para salir)\n")
@@ -114,7 +142,8 @@ def main():
         print("  1. Probar motor (giro 360°)")
         print("  2. Probar micrófono (10 s)")
         print("  3. Modo reactivo: sonido → motor")
-        print("  4. Salir")
+        print("  4. Escanear puertos (buscar micrófono)")
+        print("  5. Salir")
         print("═══════════════════════════════")
 
         try:
@@ -129,6 +158,8 @@ def main():
         elif op == "3":
             modo_reactivo(brick, segundos=30)
         elif op == "4":
+            escanear_puertos_sonido(brick)
+        elif op == "5":
             break
         else:
             print("  Opción inválida.")
