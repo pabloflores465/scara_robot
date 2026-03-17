@@ -61,7 +61,7 @@ def verificar_imports() -> None:
 # DÍA 1 — Verificación de ambiente
 # ══════════════════════════════════════════════════════════════════
 
-def dia_1(skip_nxt: bool, preview: bool) -> None:
+def dia_1(skip_nxt: bool, preview: bool, **_) -> None:
     _titulo("DÍA 1 — Verificación de ambiente")
 
     print("\n[1/4] Dependencias:")
