@@ -209,6 +209,34 @@ def verificar_calibracion(H: np.ndarray, indice_camara: int = 0) -> None:
 
 import math
 
+
+def generar_aruco(carpeta: str = "aruco_markers") -> None:
+    """
+    Genera 4 imágenes PNG con marcadores ArUco (IDs 0-3) listas para imprimir.
+    Ejecutar: python -c "from calibracion import generar_aruco; generar_aruco()"
+    """
+    import os
+    os.makedirs(carpeta, exist_ok=True)
+    try:
+        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    except AttributeError:
+        print("[CAL] ArUco no disponible. Instala: pip install opencv-contrib-python")
+        return
+    for id_ in range(4):
+        img = cv2.aruco.generateImageMarker(aruco_dict, id_, 300)
+        # Añadir borde blanco y etiqueta
+        bordered = cv2.copyMakeBorder(img, 40, 60, 40, 40,
+                                      cv2.BORDER_CONSTANT, value=255)
+        cv2.putText(bordered, f"ID {id_}  — SCARA Cal",
+                    (10, bordered.shape[0] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, 0, 2)
+        path = os.path.join(carpeta, f"aruco_id{id_}.png")
+        cv2.imwrite(path, bordered)
+        print(f"[CAL] Generado: {path}")
+    print(f"[CAL] Imprime los 4 archivos de '{carpeta}/' al mismo tamaño.")
+    print("[CAL] Colócalos en la mesa y actualiza ARUCO_ROBOT_COORDS en gui_motores.py")
+
+
 if __name__ == "__main__":
     H = calibrar_interactivo(indice_camara=0)
     if H is not None:

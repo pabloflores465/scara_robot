@@ -61,7 +61,7 @@ def verificar_imports() -> None:
 # DÍA 1 — Verificación de ambiente
 # ══════════════════════════════════════════════════════════════════
 
-def dia_1(skip_nxt: bool, preview: bool, **_) -> None:
+def dia_1(skip_nxt: bool, preview: bool, camara: int = 0, **_) -> None:
     _titulo("DÍA 1 — Verificación de ambiente")
 
     print("\n[1/4] Dependencias:")
@@ -69,7 +69,7 @@ def dia_1(skip_nxt: bool, preview: bool, **_) -> None:
 
     from vision import verificar_webcam, cargar_modelo, preview_webcam
     print("\n[2/4] Webcam:")
-    cam_ok = verificar_webcam(indice=0)
+    cam_ok = verificar_webcam(indice=camara)
 
     print("\n[3/4] Modelo YOLO:")
     modelo = cargar_modelo("modelo/best.pt")
@@ -170,7 +170,7 @@ def dia_3(skip_nxt: bool, **_) -> None:
 # DÍA 4 — Dataset y detección YOLO
 # ══════════════════════════════════════════════════════════════════
 
-def dia_4(skip_nxt: bool, preview: bool, **_) -> None:
+def dia_4(skip_nxt: bool, preview: bool, camara: int = 0, **_) -> None:
     _titulo("DÍA 4 — Dataset y detección YOLO")
 
     from vision import cargar_modelo, abrir_camara, detectar, dibujar_hud
@@ -192,7 +192,7 @@ def dia_4(skip_nxt: bool, preview: bool, **_) -> None:
 
     elif opcion == "2":
         modelo = cargar_modelo("modelo/best.pt")
-        cap = abrir_camara(0)
+        cap = abrir_camara(camara)
         print("\n  Detección en tiempo real. 'q' para salir.")
         while True:
             ret, frame = cap.read()
@@ -219,7 +219,7 @@ def dia_4(skip_nxt: bool, preview: bool, **_) -> None:
 # DÍA 5 — Integración completa
 # ══════════════════════════════════════════════════════════════════
 
-def dia_5(skip_nxt: bool, calibrar: bool, **_) -> None:
+def dia_5(skip_nxt: bool, calibrar: bool, camara: int = 0, **_) -> None:
     _titulo("DÍA 5 — Integración: visión + cinemática + robot")
 
     from vision import cargar_modelo, abrir_camara, detectar_mejor, dibujar_hud
@@ -238,7 +238,7 @@ def dia_5(skip_nxt: bool, calibrar: bool, **_) -> None:
 
     # Modelo y cámara
     modelo = cargar_modelo("modelo/best.pt")
-    cap    = abrir_camara(0)
+    cap    = abrir_camara(camara)
 
     # NXT
     brick = None
@@ -287,7 +287,7 @@ def dia_5(skip_nxt: bool, calibrar: bool, **_) -> None:
 # DÍA 6 — Demo final con bitácora automática
 # ══════════════════════════════════════════════════════════════════
 
-def dia_6(skip_nxt: bool, calibrar: bool, **_) -> None:
+def dia_6(skip_nxt: bool, calibrar: bool, camara: int = 0, **_) -> None:
     _titulo("DÍA 6 — Demo final y documentación")
 
     from vision import cargar_modelo, abrir_camara, detectar_mejor, dibujar_hud
@@ -295,7 +295,7 @@ def dia_6(skip_nxt: bool, calibrar: bool, **_) -> None:
 
     H      = cargar_calibracion()
     modelo = cargar_modelo("modelo/best.pt")
-    cap    = abrir_camara(0)
+    cap    = abrir_camara(camara)
 
     # Bitácora
     os.makedirs("bitacora", exist_ok=True)
@@ -422,6 +422,8 @@ def main() -> None:
                         help="Abrir preview de webcam (solo días 1 y 4)")
     parser.add_argument("--calibrar", action="store_true",
                         help="Recalibrar cámara-robot antes de correr (días 5-6)")
+    parser.add_argument("--camara", type=int, default=0,
+                        help="Índice de cámara (0=integrada, 1=iPhone, etc.)")
     args = parser.parse_args()
 
     desc = DESCRIPCIONES.get(args.dia, "")
@@ -433,6 +435,7 @@ def main() -> None:
         skip_nxt=args.skip_nxt,
         preview=args.preview,
         calibrar=args.calibrar,
+        camara=args.camara,
     )
 
 

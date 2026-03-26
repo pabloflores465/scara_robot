@@ -2,9 +2,11 @@
 robot.py — Conexión NXT, control de motores y rutinas de movimiento.
 
 API: nxt-python 3.x  (requiere libusb: brew install libusb)
-  Motor A → q1  (rotación base)
-  Motor B → q2  (rotación codo)
-  Motor C → Z   (eje vertical / gripper)
+  Motor A → q1      (rotación base)
+  Motor B → q2      (rotación codo)
+  Motor C → Z       (eje vertical)
+  Motor D → garra   (horario = cierra, antihorario = abre)
+            *** Motor D en puerto A de un 2do NXT, o cambiar PUERTO_GRIPPER ***
   Sensor S1 → táctil (homing)
   Sensor S4 → ultrasónico (detección presencia)
 
@@ -40,6 +42,15 @@ POT_BASE   = 60   # motor A (q1)
 POT_CODO   = 60   # motor B (q2)
 POT_Z      = 50   # motor C (Z)
 POT_HOMING = 30   # potencia para buscar home con sensor táctil
+
+# ── Garra (Motor D) ────────────────────────────────────────────────
+# Cambia PUERTO_GRIPPER según tu conexión:
+#   "A" si usas un 2do NXT (más común con 4 motores)
+#   "C" si repurposas el puerto C del mismo NXT
+PUERTO_GRIPPER = "A"      # puerto del motor de la garra
+POT_GARRA      = 40       # potencia (suave para no dañar la garra)
+TACHO_CERRAR   = 90       # grados para cerrar completamente (ajustar)
+TACHO_Z_BAJAR  = 80       # tacho para bajar el eje Z al agarrar
 
 # Tiempo de espera entre movimientos [s]
 PAUSA = 0.3
@@ -97,6 +108,43 @@ def _mover_motor_tacho(brick, puerto_letra: str, tacho: int, potencia: int) -> N
 def mover_motor(brick, puerto_letra: str, grados: int, potencia: int = 75) -> None:
     """API pública: mueve un motor específico N grados relativos."""
     _mover_motor_tacho(brick, puerto_letra, grados, potencia)
+
+
+def mover_motor_suave(brick, puerto_letra: str, tacho: int,
+                      potencia: int, aceleracion: int = 0) -> None:
+    """
+    Mueve un motor con perfil de aceleración/deceleración por software.
+
+    aceleracion: 0   = movimiento directo (sin rampa)
+                 1-9 = rampa progresiva (mayor valor = arranque más suave)
+
+    Divide el recorrido en 3 fases:
+      25% arranque  — potencia reducida
+      50% crucero   — potencia máxima
+      25% frenado   — potencia reducida
+    """
+    if tacho == 0:
+        return
+
+    # Movimientos muy cortos o sin rampa: directo
+    if aceleracion == 0 or abs(tacho) < 15:
+        _mover_motor_tacho(brick, puerto_letra, tacho, potencia)
+        return
+
+    sign      = 1 if tacho > 0 else -1
+    tacho_abs = abs(tacho)
+
+    # Potencia de arranque/frenado: más aceleración → arranca más despacio
+    pot_min = max(20, potencia - aceleracion * 7)
+
+    t_arranque = max(5, tacho_abs // 4)
+    t_frenado  = max(5, tacho_abs // 4)
+    t_crucero  = tacho_abs - t_arranque - t_frenado
+
+    _mover_motor_tacho(brick, puerto_letra, sign * t_arranque, pot_min)
+    if t_crucero > 0:
+        _mover_motor_tacho(brick, puerto_letra, sign * t_crucero, potencia)
+    _mover_motor_tacho(brick, puerto_letra, sign * t_frenado, pot_min)
 
 
 def verificar_motores(brick, grados: int = 90, potencia: int = 75) -> None:
@@ -202,67 +250,102 @@ def ir_a_posicion(brick, nombre: str) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════
-# SECUENCIAS DE CLASIFICACIÓN (Día 5-6)
+# GARRA (Motor D)
+# ══════════════════════════════════════════════════════════════════
+
+def abrir_garra(brick, tacho: int = TACHO_CERRAR, potencia: int = POT_GARRA) -> None:
+    """Abre la garra (sentido antihorario)."""
+    print("[GARRA] Abriendo...")
+    _mover_motor_tacho(brick, PUERTO_GRIPPER, -tacho, potencia)
+    time.sleep(PAUSA)
+
+
+def cerrar_garra(brick, tacho: int = TACHO_CERRAR, potencia: int = POT_GARRA) -> None:
+    """Cierra la garra (sentido horario)."""
+    print("[GARRA] Cerrando...")
+    _mover_motor_tacho(brick, PUERTO_GRIPPER, tacho, potencia)
+    time.sleep(PAUSA)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SECUENCIAS DE CLASIFICACIÓN
 # ══════════════════════════════════════════════════════════════════
 
 def secuencia_clasificar(brick, color: str) -> bool:
     """
-    Secuencia completa de clasificación para una pelota.
-    color: "pelota_roja" o "pelota_azul"
-
-    Etapas:
-      1. HOME
-      2. TOMA (posición sobre la pelota)
-      3. Bajar efector
-      4. Tomar pelota (activar gripper si hay motor para ello)
-      5. Subir efector
-      6. ZONA_ROJA o ZONA_AZUL
-      7. Bajar efector
-      8. Soltar pelota
-      9. Subir efector
-     10. HOME
+    Secuencia completa con garra:
+      1.  HOME  (garra abierta)
+      2.  Posicionar brazo sobre la pelota (TOMA)
+      3.  Bajar eje Z
+      4.  Cerrar garra  ← agarra pelota
+      5.  Subir eje Z
+      6.  Mover a ZONA_ROJA o ZONA_AZUL
+      7.  Bajar eje Z
+      8.  Abrir garra   ← suelta pelota
+      9.  Subir eje Z
+      10. HOME
     """
     zona = "ZONA_ROJA" if "roja" in color else "ZONA_AZUL"
     print(f"\n[SEQ] Clasificando: {color} → {zona}")
 
     try:
-        # 1. Home
+        # 1. HOME con garra abierta
+        ir_a_posicion(brick, "HOME")
+        abrir_garra(brick)
+
+        # 2-3. Ir sobre la pelota y bajar
+        q1, q2, _ = POSICIONES["TOMA"]
+        mover_a_angulos(brick, q1, q2, z_tacho=0)   # posicionar sin bajar
+        time.sleep(PAUSA)
+        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)   # bajar
+
+        # 4. Cerrar garra
+        cerrar_garra(brick)
+
+        # 5. Subir
+        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
+        time.sleep(PAUSA)
+
+        # 6-7. Ir a zona y bajar
+        q1z, q2z, _ = POSICIONES[zona]
+        mover_a_angulos(brick, q1z, q2z, z_tacho=0)
+        time.sleep(PAUSA)
+        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
+
+        # 8. Abrir garra
+        abrir_garra(brick)
+
+        # 9. Subir
+        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
+        time.sleep(PAUSA)
+
+        # 10. HOME
         ir_a_posicion(brick, "HOME")
 
-        # 2-5. Tomar pelota
-        ir_a_posicion(brick, "TOMA")
-        print("[SEQ] Tomando pelota...")
-        # Si Motor C es el gripper: añadir lógica aquí
-        time.sleep(0.5)
-
-        # 6-9. Depositar en zona
-        ir_a_posicion(brick, zona)
-        print("[SEQ] Depositando pelota...")
-        time.sleep(0.5)
-
-        # 10. Volver a home
-        ir_a_posicion(brick, "HOME")
-
-        brick.play_tone_and_wait(1047, 200)   # do agudo = éxito
+        brick.play_tone_and_wait(1047, 200)
         print(f"[SEQ] OK — {color} depositada en {zona}")
         return True
 
     except Exception as e:
-        print(f"[SEQ] Error durante clasificación: {e}")
-        ir_a_posicion(brick, "HOME")   # intentar volver a home
+        print(f"[SEQ] Error: {e}")
+        try:
+            abrir_garra(brick)          # soltar por seguridad
+            ir_a_posicion(brick, "HOME")
+        except Exception:
+            pass
         return False
 
 
 def ejecutar_con_coordenadas(brick, x: float, y: float, color: str) -> bool:
     """
-    Versión de clasificación usando coordenadas del robot (de la cámara).
-    Calcula la cinemática inversa y mueve directamente al punto de toma.
+    Clasificación usando coordenadas calculadas por YOLO + homografía.
+    Calcula IK y ejecuta la secuencia completa con garra.
     """
     from cinematica import cinematica_inversa, validar_limites
 
     ik = cinematica_inversa(x, y)
     if ik is None:
-        print(f"[ROBOT] ({x:.3f}, {y:.3f}) fuera de alcance del robot.")
+        print(f"[ROBOT] ({x:.3f}, {y:.3f}) fuera de alcance.")
         return False
 
     q1, q2 = ik
@@ -271,20 +354,50 @@ def ejecutar_con_coordenadas(brick, x: float, y: float, color: str) -> bool:
         return False
 
     zona = "ZONA_ROJA" if "roja" in color else "ZONA_AZUL"
-    _, _, z_toma = POSICIONES["TOMA"]
-    _, _, z_zona = POSICIONES[zona]
+    print(f"[ROBOT] IK: ({x:.3f},{y:.3f}) → q1={q1:.1f}° q2={q2:.1f}°  zona={zona}")
 
-    print(f"[ROBOT] IK: ({x:.3f},{y:.3f}) → q1={q1:.1f}° q2={q2:.1f}°")
+    try:
+        # HOME + garra abierta
+        ir_a_posicion(brick, "HOME")
+        abrir_garra(brick)
 
-    ir_a_posicion(brick, "HOME")
-    mover_a_angulos(brick, q1, q2, z_toma)
-    time.sleep(0.5)
-    ir_a_posicion(brick, zona)
-    time.sleep(0.5)
-    ir_a_posicion(brick, "HOME")
+        # Posicionar sobre la pelota (IK exacto) y bajar
+        mover_a_angulos(brick, q1, q2, z_tacho=0)
+        time.sleep(PAUSA)
+        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
 
-    brick.play_tone_and_wait(1047, 200)
-    return True
+        # Agarrar
+        cerrar_garra(brick)
+
+        # Subir
+        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
+        time.sleep(PAUSA)
+
+        # Ir a zona destino y bajar
+        q1z, q2z, _ = POSICIONES[zona]
+        mover_a_angulos(brick, q1z, q2z, z_tacho=0)
+        time.sleep(PAUSA)
+        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
+
+        # Soltar
+        abrir_garra(brick)
+
+        # Subir y volver a HOME
+        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
+        time.sleep(PAUSA)
+        ir_a_posicion(brick, "HOME")
+
+        brick.play_tone_and_wait(1047, 200)
+        return True
+
+    except Exception as e:
+        print(f"[ROBOT] Error en secuencia: {e}")
+        try:
+            abrir_garra(brick)
+            ir_a_posicion(brick, "HOME")
+        except Exception:
+            pass
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════
