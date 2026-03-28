@@ -2,16 +2,13 @@
 robot.py — Conexión NXT, control de motores y rutinas de movimiento.
 
 API: nxt-python 3.x  (requiere libusb: brew install libusb)
-  Motor A → q1      (rotación base)
-  Motor B → q2      (rotación codo)
-  Motor C → Z       (eje vertical)
-  Motor D → garra   (horario = cierra, antihorario = abre)
-            *** Motor D en puerto A de un 2do NXT, o cambiar PUERTO_GRIPPER ***
+  Motor A → q1    (rotación base)
+  Motor B → q2    (rotación codo)
+  Motor C → garra (horario = cierra, antihorario = abre)
   Sensor S1 → táctil (homing)
-  Sensor S4 → ultrasónico (detección presencia)
 
-POSICIONES — editar con ángulos reales medidos en Día 3:
-  Cada entrada es (q1_grados, q2_grados, z_tacho)
+POSICIONES — editar con ángulos reales medidos:
+  Cada entrada es (q1_grados, q2_grados)
   q1, q2 en grados de articulación (cinematica.py los convierte a tacho)
 """
 
@@ -27,30 +24,25 @@ from nxt.sensor.generic import Touch, Ultrasonic
 # ══════════════════════════════════════════════════════════════════
 # POSICIONES CLAVE — EDITAR CON MEDIDAS REALES (DÍA 3)
 # ══════════════════════════════════════════════════════════════════
-#   (q1_deg, q2_deg, z_tacho)
-#   z_tacho: pasos del motor C  (0 = arriba, positivo = bajar)
+#   (q1_deg, q2_deg)
+#   q1, q2 en grados de articulación
 
 POSICIONES = {
-    "HOME":       (0.0,    0.0,   0),    # posición de reposo
-    "TOMA":       (45.0, -30.0,  80),    # sobre el punto de recogida
-    "ZONA_ROJA":  (90.0, -45.0,  80),    # zona de depósito roja
-    "ZONA_AZUL":  (-90.0,-45.0,  80),    # zona de depósito azul
+    "HOME":      (0.0,    0.0),     # posición de reposo
+    "TOMA":      (45.0, -30.0),     # sobre el punto de recogida ← AJUSTAR
+    "ZONA_ROJA": (90.0, -45.0),     # zona de depósito roja      ← AJUSTAR
+    "ZONA_AZUL": (-90.0, -45.0),    # zona de depósito azul      ← AJUSTAR
 }
 
 # Potencias de movimiento (0–100)
 POT_BASE   = 60   # motor A (q1)
 POT_CODO   = 60   # motor B (q2)
-POT_Z      = 50   # motor C (Z)
 POT_HOMING = 30   # potencia para buscar home con sensor táctil
 
-# ── Garra (Motor D) ────────────────────────────────────────────────
-# Cambia PUERTO_GRIPPER según tu conexión:
-#   "A" si usas un 2do NXT (más común con 4 motores)
-#   "C" si repurposas el puerto C del mismo NXT
-PUERTO_GRIPPER = "A"      # puerto del motor de la garra
+# ── Garra (Motor C) ───────────────────────────────────────────────
+PUERTO_GRIPPER = "C"      # puerto del motor de la garra
 POT_GARRA      = 40       # potencia (suave para no dañar la garra)
-TACHO_CERRAR   = 90       # grados para cerrar completamente (ajustar)
-TACHO_Z_BAJAR  = 80       # tacho para bajar el eje Z al agarrar
+TACHO_CERRAR   = 90       # grados para cerrar (horario)  ← AJUSTAR
 
 # Tiempo de espera entre movimientos [s]
 PAUSA = 0.3
@@ -204,11 +196,14 @@ def ir_a_home(brick) -> None:
 # MOVIMIENTO A POSICIÓN ARTICULAR
 # ══════════════════════════════════════════════════════════════════
 
-def mover_a_angulos(brick, q1_deg: float, q2_deg: float, z_tacho: int = 0) -> None:
+Q1_CLASIFICAR_MIN = -90.0   # límite de q1 durante clasificación
+Q1_CLASIFICAR_MAX =  90.0
+
+
+def mover_a_angulos(brick, q1_deg: float, q2_deg: float) -> None:
     """
-    Mueve el robot a los ángulos articulares dados.
+    Mueve el robot a los ángulos articulares dados (manual, ambos motores).
     Convierte grados → tachos usando los gear ratios de cinematica.py.
-    Secuencia: primero Z arriba → q1/q2 → Z a posición final.
     """
     from cinematica import (
         articulacion_a_tacho, GEAR_RATIO_Q1, GEAR_RATIO_Q2,
@@ -222,48 +217,51 @@ def mover_a_angulos(brick, q1_deg: float, q2_deg: float, z_tacho: int = 0) -> No
     tacho_a = articulacion_a_tacho(q1_deg, GEAR_RATIO_Q1)
     tacho_b = articulacion_a_tacho(q2_deg, GEAR_RATIO_Q2)
 
-    # Subir eje Z antes de girar (seguridad)
-    if z_tacho > 0:
-        _mover_motor_tacho(brick, "C", -z_tacho, POT_Z)   # subir primero
-        time.sleep(PAUSA)
-
-    # Mover base y codo
     _mover_motor_tacho(brick, "A", tacho_a, POT_BASE)
     time.sleep(PAUSA)
     _mover_motor_tacho(brick, "B", tacho_b, POT_CODO)
     time.sleep(PAUSA)
 
-    # Bajar a posición Z final
-    if z_tacho > 0:
-        _mover_motor_tacho(brick, "C", z_tacho, POT_Z)
-        time.sleep(PAUSA)
+
+def mover_base(brick, q1_deg: float) -> None:
+    """
+    Clasificación: mueve SOLO el motor A (base).
+    Motor B (codo) no se toca. q1 se limita a ±90°.
+    """
+    from cinematica import articulacion_a_tacho, GEAR_RATIO_Q1
+
+    q1_deg = max(Q1_CLASIFICAR_MIN, min(Q1_CLASIFICAR_MAX, q1_deg))
+    tacho_a = articulacion_a_tacho(q1_deg, GEAR_RATIO_Q1)
+    print(f"[BASE] q1={q1_deg:.1f}°  tacho={tacho_a}")
+    _mover_motor_tacho(brick, "A", tacho_a, POT_BASE)
+    time.sleep(PAUSA)
 
 
 def ir_a_posicion(brick, nombre: str) -> None:
-    """Mueve el robot a una posición predefinida en POSICIONES."""
+    """Mueve el robot a una posición predefinida (solo motor A durante clasificación)."""
     if nombre not in POSICIONES:
         print(f"[ROBOT] Posición '{nombre}' no definida. Opciones: {list(POSICIONES)}")
         return
-    q1, q2, z = POSICIONES[nombre]
-    print(f"[ROBOT] → {nombre}  (q1={q1}°, q2={q2}°, z={z})")
-    mover_a_angulos(brick, q1, q2, z)
+    q1, _ = POSICIONES[nombre]
+    print(f"[ROBOT] → {nombre}  (q1={q1}°)")
+    mover_base(brick, q1)
 
 
 # ══════════════════════════════════════════════════════════════════
-# GARRA (Motor D)
+# GARRA (Motor C)
 # ══════════════════════════════════════════════════════════════════
 
 def abrir_garra(brick, tacho: int = TACHO_CERRAR, potencia: int = POT_GARRA) -> None:
-    """Abre la garra (sentido antihorario)."""
+    """Abre la garra (sentido horario)."""
     print("[GARRA] Abriendo...")
-    _mover_motor_tacho(brick, PUERTO_GRIPPER, -tacho, potencia)
+    _mover_motor_tacho(brick, PUERTO_GRIPPER, tacho, potencia)
     time.sleep(PAUSA)
 
 
 def cerrar_garra(brick, tacho: int = TACHO_CERRAR, potencia: int = POT_GARRA) -> None:
-    """Cierra la garra (sentido horario)."""
+    """Cierra la garra (sentido antihorario)."""
     print("[GARRA] Cerrando...")
-    _mover_motor_tacho(brick, PUERTO_GRIPPER, tacho, potencia)
+    _mover_motor_tacho(brick, PUERTO_GRIPPER, -tacho, potencia)
     time.sleep(PAUSA)
 
 
@@ -273,53 +271,24 @@ def cerrar_garra(brick, tacho: int = TACHO_CERRAR, potencia: int = POT_GARRA) ->
 
 def secuencia_clasificar(brick, color: str) -> bool:
     """
-    Secuencia completa con garra:
-      1.  HOME  (garra abierta)
-      2.  Posicionar brazo sobre la pelota (TOMA)
-      3.  Bajar eje Z
-      4.  Cerrar garra  ← agarra pelota
-      5.  Subir eje Z
-      6.  Mover a ZONA_ROJA o ZONA_AZUL
-      7.  Bajar eje Z
-      8.  Abrir garra   ← suelta pelota
-      9.  Subir eje Z
-      10. HOME
+    Secuencia completa con garra (sin eje Z):
+      1. HOME  (garra abierta)
+      2. Posicionar brazo sobre la pelota (TOMA)
+      3. Cerrar garra  ← agarra pelota
+      4. Mover a ZONA_ROJA o ZONA_AZUL
+      5. Abrir garra   ← suelta pelota
+      6. HOME
     """
     zona = "ZONA_ROJA" if "roja" in color else "ZONA_AZUL"
     print(f"\n[SEQ] Clasificando: {color} → {zona}")
 
     try:
-        # 1. HOME con garra abierta
-        ir_a_posicion(brick, "HOME")
-        abrir_garra(brick)
-
-        # 2-3. Ir sobre la pelota y bajar
-        q1, q2, _ = POSICIONES["TOMA"]
-        mover_a_angulos(brick, q1, q2, z_tacho=0)   # posicionar sin bajar
-        time.sleep(PAUSA)
-        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)   # bajar
-
-        # 4. Cerrar garra
+        ir_a_posicion(brick, "TOMA")
         cerrar_garra(brick)
 
-        # 5. Subir
-        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
-        time.sleep(PAUSA)
-
-        # 6-7. Ir a zona y bajar
-        q1z, q2z, _ = POSICIONES[zona]
-        mover_a_angulos(brick, q1z, q2z, z_tacho=0)
-        time.sleep(PAUSA)
-        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
-
-        # 8. Abrir garra
+        ir_a_posicion(brick, zona)
         abrir_garra(brick)
 
-        # 9. Subir
-        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
-        time.sleep(PAUSA)
-
-        # 10. HOME
         ir_a_posicion(brick, "HOME")
 
         brick.play_tone_and_wait(1047, 200)
@@ -329,7 +298,7 @@ def secuencia_clasificar(brick, color: str) -> bool:
     except Exception as e:
         print(f"[SEQ] Error: {e}")
         try:
-            abrir_garra(brick)          # soltar por seguridad
+            abrir_garra(brick)
             ir_a_posicion(brick, "HOME")
         except Exception:
             pass
@@ -338,53 +307,26 @@ def secuencia_clasificar(brick, color: str) -> bool:
 
 def ejecutar_con_coordenadas(brick, x: float, y: float, color: str) -> bool:
     """
-    Clasificación usando coordenadas calculadas por YOLO + homografía.
-    Calcula IK y ejecuta la secuencia completa con garra.
+    Clasificación usando coordenadas YOLO + homografía.
+    Solo mueve motor A (base), motor B queda fijo. q1 limitado a ±90°.
     """
-    from cinematica import cinematica_inversa, validar_limites
+    import math
 
-    ik = cinematica_inversa(x, y)
-    if ik is None:
-        print(f"[ROBOT] ({x:.3f}, {y:.3f}) fuera de alcance.")
-        return False
-
-    q1, q2 = ik
-    if not validar_limites(q1, q2):
-        print(f"[ROBOT] Ángulos fuera de límites: q1={q1:.1f}° q2={q2:.1f}°")
-        return False
+    # Calcular q1 apuntando el brazo extendido hacia (x, y)
+    q1 = math.degrees(math.atan2(y, x))
+    q1 = max(Q1_CLASIFICAR_MIN, min(Q1_CLASIFICAR_MAX, q1))
 
     zona = "ZONA_ROJA" if "roja" in color else "ZONA_AZUL"
-    print(f"[ROBOT] IK: ({x:.3f},{y:.3f}) → q1={q1:.1f}° q2={q2:.1f}°  zona={zona}")
+    print(f"[ROBOT] ({x:.3f},{y:.3f}) → q1={q1:.1f}°  zona={zona}")
 
     try:
-        # HOME + garra abierta
-        ir_a_posicion(brick, "HOME")
-        abrir_garra(brick)
-
-        # Posicionar sobre la pelota (IK exacto) y bajar
-        mover_a_angulos(brick, q1, q2, z_tacho=0)
-        time.sleep(PAUSA)
-        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
-
-        # Agarrar
+        mover_base(brick, q1)
         cerrar_garra(brick)
 
-        # Subir
-        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
-        time.sleep(PAUSA)
-
-        # Ir a zona destino y bajar
-        q1z, q2z, _ = POSICIONES[zona]
-        mover_a_angulos(brick, q1z, q2z, z_tacho=0)
-        time.sleep(PAUSA)
-        _mover_motor_tacho(brick, "C", TACHO_Z_BAJAR, POT_Z)
-
-        # Soltar
+        q1z, _ = POSICIONES[zona]
+        mover_base(brick, q1z)
         abrir_garra(brick)
 
-        # Subir y volver a HOME
-        _mover_motor_tacho(brick, "C", -TACHO_Z_BAJAR, POT_Z)
-        time.sleep(PAUSA)
         ir_a_posicion(brick, "HOME")
 
         brick.play_tone_and_wait(1047, 200)

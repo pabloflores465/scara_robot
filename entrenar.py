@@ -30,7 +30,7 @@ from ultralytics import YOLO
 # ══════════════════════════════════════════════════════════════════
 
 CLASES = ["pelota_azul", "pelota_roja"]   # orden importa: 0=azul, 1=roja
-MODELO_BASE = "yolo11n.pt"               # modelo preentrenado de partida
+MODELO_BASE = "yolo11m.pt"               # modelo preentrenado de partida
 MODELO_DESTINO = "modelo/best.pt"
 DATA_YAML = "dataset/data.yaml"
 

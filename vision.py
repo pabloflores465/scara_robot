@@ -22,7 +22,7 @@ def cargar_modelo(ruta: str = "modelo/best.pt") -> YOLO:
     """
     if not os.path.exists(ruta):
         print(f"[VISION] '{ruta}' no encontrado. Usando yolo11n.pt para prueba.")
-        ruta = "yolo11n.pt"
+        ruta = "yolo11m.pt"
     modelo = YOLO(ruta)
     print(f"[VISION] Modelo cargado: {ruta}")
     return modelo

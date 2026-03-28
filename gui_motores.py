@@ -67,24 +67,14 @@ MOTORES = [
     },
     {
         "id":        "C",
-        "nombre":    "Motor 3 — Eje Z",
-        "unidad":    " tacho",
-        "min":       -90,
-        "max":       90,
-        "paso":      5,
-        "potencia":  70,
-        "conectado": True,
-    },
-    {
-        "id":        "D",
-        "nombre":    "Motor 4 — Garra",
+        "nombre":    "Motor 3 — Garra",
         "unidad":    "°",
         "min":       -90,
         "max":       90,
         "paso":      10,
         "potencia":  40,
         "conectado": True,
-        "es_garra":  True,   # indica que tiene botones Abrir/Cerrar
+        "es_garra":  True,   # horario = cierra, antihorario = abre
     },
 ]
 
@@ -530,8 +520,9 @@ class AppSCARA(tk.Tk):
         self._photo        = None   # referencia para evitar GC
 
         # Pipeline YOLO → IK → NXT
-        self.H_cal         = None   # homografía calibración
-        self.ultima_det    = None   # última detección YOLO
+        self.H_cal          = None   # homografía calibración
+        self.ultima_det     = None   # última detección YOLO
+        self.confianza_min  = tk.DoubleVar(value=0.5)
         self.modo_auto     = False  # clasificación automática
         self.clasificando  = False  # bloquea re-entrada en secuencia
         self.cal_mode      = False  # modo captura de puntos
@@ -663,6 +654,20 @@ class AppSCARA(tk.Tk):
         )
         self.btn_yolo.pack(side=tk.LEFT)
 
+        tk.Label(f_cam_ctrl, text="Conf:", bg=COLOR_PANEL, fg=COLOR_SUBTEXT,
+                 font=("Courier", 9)).pack(side=tk.LEFT, padx=(12, 2))
+        self.lbl_conf = tk.Label(f_cam_ctrl, text="0.50", bg=COLOR_PANEL,
+                                 fg=COLOR_TEXTO, font=("Courier", 9, "bold"), width=4)
+        self.lbl_conf.pack(side=tk.LEFT)
+        tk.Scale(
+            f_cam_ctrl, variable=self.confianza_min,
+            from_=0.05, to=0.95, resolution=0.05,
+            orient=tk.HORIZONTAL, length=100, showvalue=False,
+            bg=COLOR_PANEL, troughcolor=COLOR_BTN,
+            activebackground=COLOR_AMARILLO, highlightthickness=0, bd=0,
+            command=lambda v: self.lbl_conf.config(text=f"{float(v):.2f}"),
+        ).pack(side=tk.LEFT)
+
         # Video frame (se expande horizontal y verticalmente)
         f_video = tk.Frame(f_der, bg="black")
         f_video.pack(fill=tk.BOTH, expand=True)
@@ -776,6 +781,13 @@ class AppSCARA(tk.Tk):
             state=tk.DISABLED,
         )
         self.btn_auto.pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            f_acc, text="⚑ Zonas",
+            bg=COLOR_BTN, fg=COLOR_AMARILLO,
+            activebackground=COLOR_BTN_HVR, activeforeground=COLOR_AMARILLO,
+            font=("Courier", 9), bd=0, cursor="hand2",
+            padx=8, pady=5, command=self._editar_zonas,
+        ).pack(side=tk.LEFT)
 
         # Bind clics en el video para calibración
         self.lbl_video.bind("<Button-1>", self._video_click)
@@ -920,7 +932,8 @@ class AppSCARA(tk.Tk):
             if self.yolo_activo and self.modelo_yolo:
                 try:
                     from vision import detectar, dibujar_hud
-                    dets = detectar(frame, self.modelo_yolo)
+                    dets = detectar(frame, self.modelo_yolo,
+                                    confianza_min=self.confianza_min.get())
                     det = dets[0] if dets else None
 
                     if det and self.H_cal is not None:
@@ -1073,57 +1086,70 @@ class AppSCARA(tk.Tk):
         self._log("Buscando marcadores ArUco...", "info")
         self.update()
 
-        # Captura varios frames para dar tiempo a enfocar
-        frame = None
-        for _ in range(5):
-            ret, frame = self.cap.read()
+        try:
+            import numpy as np
 
-        if frame is None:
-            self._log("No se pudo capturar frame.", "error")
-            return
+            # Captura varios frames para dar tiempo a enfocar
+            frame = None
+            for _ in range(5):
+                ret, frame = self.cap.read()
 
-        detector = cv2.aruco.ArucoDetector(_ARUCO_DICT, _ARUCO_PARAMS)
-        corners, ids, _ = detector.detectMarkers(frame)
+            if frame is None:
+                self._log("No se pudo capturar frame.", "error")
+                return
 
-        if ids is None or len(ids) == 0:
-            self._log("No se detectaron marcadores ArUco en el frame.", "error")
-            return
-
-        ids_flat = [int(i[0]) for i in ids]
-        faltantes = [k for k in ARUCO_ROBOT_COORDS if k not in ids_flat]
-        if faltantes:
-            self._log(f"Faltan marcadores: {faltantes}. Detectados: {ids_flat}", "error")
-            return
-
-        import numpy as np
-        puntos_px    = []
-        puntos_robot = []
-        for corner, id_arr in zip(corners, ids):
-            mid = ARUCO_ROBOT_COORDS.get(int(id_arr[0]))
-            if mid is None:
-                continue
-            cx = float(corner[0][:, 0].mean())
-            cy = float(corner[0][:, 1].mean())
-
-            # Escalar a coordenadas del display
-            fh_orig, fw_orig = frame.shape[:2]
+            # Redimensionar al tamaño del display para que coordenadas coincidan con YOLO
             fw_disp, fh_disp = self._frame_size
-            cx = cx * fw_disp / fw_orig
-            cy = cy * fh_disp / fh_orig
+            frame_disp = cv2.resize(frame, (fw_disp, fh_disp))
 
-            puntos_px.append([cx, cy])
-            puntos_robot.append(list(mid))
+            detector = cv2.aruco.ArucoDetector(_ARUCO_DICT, _ARUCO_PARAMS)
+            corners, ids, _ = detector.detectMarkers(frame_disp)
 
-        src = np.array(puntos_px,    dtype=np.float32)
-        dst = np.array(puntos_robot, dtype=np.float32)
-        H, _ = cv2.findHomography(src, dst)
+            if ids is None or len(ids) == 0:
+                self._log("No se detectaron marcadores ArUco en el frame.", "error")
+                return
 
-        from calibracion import guardar_calibracion
-        guardar_calibracion(H, [list(p) for p in src], [list(p) for p in dst])
+            ids_flat = [int(i[0]) for i in ids]
+            self._log(f"Detectados: {ids_flat}", "info")
+            self.update()
 
-        self.H_cal = H
-        self.lbl_cal_status.config(text="● Calibrado (ArUco)", fg=COLOR_VERDE)
-        self._log(f"Calibración ArUco OK — {len(puntos_px)} marcadores detectados.", "ok")
+            faltantes = [k for k in ARUCO_ROBOT_COORDS if k not in ids_flat]
+            if faltantes:
+                self._log(f"Faltan marcadores IDs: {faltantes}", "error")
+                return
+
+            puntos_px    = []
+            puntos_robot = []
+            for corner, id_arr in zip(corners, ids):
+                mid = ARUCO_ROBOT_COORDS.get(int(id_arr[0]))
+                if mid is None:
+                    continue
+                cx = float(corner[0][:, 0].mean())
+                cy = float(corner[0][:, 1].mean())
+                puntos_px.append([cx, cy])
+                puntos_robot.append(list(mid))
+
+            src = np.array(puntos_px,    dtype=np.float32)
+            dst = np.array(puntos_robot, dtype=np.float32)
+            H, _ = cv2.findHomography(src, dst)
+
+            if H is None:
+                self._log("findHomography falló — verifica que los marcadores no estén alineados.", "error")
+                return
+
+            from calibracion import guardar_calibracion
+            guardar_calibracion(
+                H,
+                [[float(v) for v in p] for p in src],
+                [[float(v) for v in p] for p in dst],
+            )
+
+            self.H_cal = H
+            self.lbl_cal_status.config(text="● Calibrado (ArUco)", fg=COLOR_VERDE)
+            self._log(f"Calibración ArUco OK — {len(puntos_px)} marcadores.", "ok")
+
+        except Exception as e:
+            self._log(f"Error en calibración ArUco: {e}", "error")
 
     def _cargar_calibracion_silencioso(self):
         """Carga calibración al inicio sin mostrar error si no existe."""
@@ -1258,6 +1284,51 @@ class AppSCARA(tk.Tk):
         finally:
             self.clasificando = False
             self.btn_clasificar.config(state=tk.NORMAL)
+
+    def _editar_zonas(self):
+        """Diálogo para editar las posiciones HOME, TOMA, ZONA_ROJA y ZONA_AZUL."""
+        import robot as _robot
+
+        win = tk.Toplevel(self)
+        win.title("Editar posiciones")
+        win.configure(bg=COLOR_BG)
+        win.resizable(False, False)
+
+        tk.Label(win, text="Posiciones del robot  (solo q1 se usa en clasificación)",
+                 bg=COLOR_BG, fg=COLOR_TEXTO, font=("Courier", 9)).pack(pady=(12, 8))
+
+        entradas = {}
+        for nombre, (q1, q2) in _robot.POSICIONES.items():
+            f = tk.Frame(win, bg=COLOR_BG)
+            f.pack(padx=20, pady=4, fill=tk.X)
+            color = COLOR_ROJO if "ROJA" in nombre else (
+                    COLOR_ACENTO if "AZUL" in nombre else COLOR_AMARILLO)
+            tk.Label(f, text=f"{nombre}", bg=COLOR_BG, fg=color,
+                     font=("Courier", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
+            tk.Label(f, text="q1:", bg=COLOR_BG, fg=COLOR_SUBTEXT,
+                     font=("Courier", 9)).pack(side=tk.LEFT, padx=(8, 2))
+            e = tk.Entry(f, width=7, bg=COLOR_BTN, fg=COLOR_TEXTO,
+                         insertbackground=COLOR_TEXTO, font=("Courier", 9))
+            e.insert(0, str(q1))
+            e.pack(side=tk.LEFT)
+            tk.Label(f, text="°  (q2 fijo)", bg=COLOR_BG, fg=COLOR_GRIS,
+                     font=("Courier", 8)).pack(side=tk.LEFT, padx=(4, 0))
+            entradas[nombre] = e
+
+        def _guardar():
+            try:
+                for nombre, e in entradas.items():
+                    q1_nuevo = float(e.get())
+                    _, q2_actual = _robot.POSICIONES[nombre]
+                    _robot.POSICIONES[nombre] = (q1_nuevo, q2_actual)
+                self._log("Posiciones actualizadas.", "ok")
+                win.destroy()
+            except ValueError:
+                self._log("Valor inválido — ingresa solo números.", "error")
+
+        tk.Button(win, text="Guardar", bg=COLOR_VERDE, fg=COLOR_BG,
+                  font=("Courier", 10, "bold"), bd=0, padx=12, pady=6,
+                  command=_guardar).pack(pady=12)
 
     def _toggle_auto(self):
         self.modo_auto = not self.modo_auto
